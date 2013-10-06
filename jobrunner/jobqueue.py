@@ -16,41 +16,69 @@
 #    under the License.
 
 import sys
-import zmq
+import amqpclient
+import time
 
 from oslo.config import cfg
 from jobrunner.openstack.common import log as logging
 
 opts = [
-    cfg.StrOpt('queue_pull_uri', default='tcp://127.0.0.1:4001', help='Zmq pull queue uri'),
-    cfg.StrOpt('queue_push_uri', default='tcp://*:4002', help='Zmq push queue uri'),
+    cfg.StrOpt(
+        'queue',
+        default='jobqueue',
+        help='RabbitMQ host'),
+
+]
+
+opts_wrk = [
+    cfg.StrOpt(
+        'queue',
+        default='jobqueue',
+        help='RabbitMQ host'),
+
 ]
 
 CONF = cfg.CONF
 CONF.register_opts(opts, 'jobqueue')
+CONF.register_opts(opts, 'jobworker')
+
 
 LOG = logging.getLogger(__name__)
+
+
+def broker_opts():
+    return {
+        "host": CONF.rabbitMQ.host,
+        "user": CONF.rabbitMQ.user,
+        "passwd": CONF.rabbitMQ.passwd,
+        "vhost": CONF.rabbitMQ.vhost,
+        "retry": CONF.rabbitMQ.retry,
+    }
+
+
+def callback(msg):
+    OPTS = broker_opts()
+    pr = amqpclient.Producer(CONF.rabbitMQ.exchange, **OPTS)
+    pr.publish(msg.body, CONF.jobworker.queue)
+    pr.close()
+    return True
 
 
 def main():
     CONF(sys.argv[1:])
     logging.setup('jobqueue')
+    OPTS = broker_opts()
+    while True:
+        try:
+            c = amqpclient.Consume(
+                CONF.rabbitMQ.exchange,
+                CONF.jobqueue.queue,
+                **OPTS)
+            c.consume(callback)
+        except Exception as err:
+            LOG.error(err)
+            time.sleep(3)
 
-    context = zmq.Context(1)
-
-    # Socket facing clients
-    frontend = context.socket(zmq.PULL)
-    frontend.bind(CONF.jobqueue.queue_pull_uri)
-
-    # Socket facing services
-    backend  = context.socket(zmq.PUSH)
-    backend.bind(CONF.jobqueue.queue_push_uri)
-
-    zmq.device(zmq.QUEUE, frontend, backend)
-
-    frontend.close()
-    backend.close()
-    context.term()
 
 if __name__ == "__main__":
     main()

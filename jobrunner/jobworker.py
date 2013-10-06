@@ -20,15 +20,20 @@ import os
 import subprocess
 import sys
 import urllib2
-import zmq
+import amqpclient
+import time
 
 from oslo.config import cfg
 from jobrunner.openstack.common import log as logging
 from jobrunner.utils import smtp
 
 opts = [
-    cfg.ListOpt('jobs', default='', help='job_name:path comma separated values'),
-    cfg.StrOpt('queue_pull_uri', default='tcp://127.0.0.1:4002', help='Zmq pull queue uri'),
+    cfg.ListOpt(
+        'jobs', default='', help='job_name:path comma separated values'),
+    cfg.StrOpt(
+        'queue',
+        default='',
+        help='jobworker queue'),
 ]
 
 CONF = cfg.CONF
@@ -37,27 +42,41 @@ CONF.register_opts(opts, 'jobworker')
 LOG = logging.getLogger(__name__)
 
 
+def broker_opts():
+    return {
+        "host": CONF.rabbitMQ.host,
+        "user": CONF.rabbitMQ.user,
+        "passwd": CONF.rabbitMQ.passwd,
+        "vhost": CONF.rabbitMQ.vhost,
+        "retry": CONF.rabbitMQ.retry,
+    }
+
+
 def exec_proc(args):
     LOG.debug("Invoking process: %s" % args)
 
     # Set the job's path as current dir
     p = subprocess.Popen(args,
-                         cwd=os.path.dirname(os.path.abspath(args[0])), 
+                         cwd=os.path.dirname(os.path.abspath(args[0])),
                          stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE)
     out, err = p.communicate()
     return (out, err, p.returncode)
 
+
 def post_data(url, data):
-   LOG.info('Posting data %s to return url %s' % (data, url))
-   r = urllib2.Request(url, data=json.dumps(data))
-   urllib2.urlopen(r)
+    LOG.info('Posting data %s to return url %s' % (data, url))
+    r = urllib2.Request(url, data=json.dumps(data))
+    urllib2.urlopen(r)
+
 
 def _get_jobs_dict():
-   return dict([[a.strip() for a in v.split(':')]
-                 for v in CONF.jobworker.jobs])
+    return dict(
+        [[a.strip() for a in v.split(':')] for v in CONF.jobworker.jobs])
+
 
 def exec_job(data):
+    data = json.loads(data.body)
     job_id = data['job_id']
     LOG.info('Processing job: %s' % job_id)
 
@@ -67,7 +86,7 @@ def exec_job(data):
     if not job_path:
         raise Exception('Job %s not defined' % job_name)
 
-    args = [job_path, job_id] + data['job_args']    
+    args = [job_path, job_id] + data['job_args']
     out, err, returncode = exec_proc(args)
 
     msg = 'Job return code: %s' % returncode
@@ -94,34 +113,32 @@ def exec_job(data):
             try:
                 post_data(return_url, return_data)
             except Exception, ex:
-                LOG.error("HTTP job results call failed for URL: %s" % return_url)
+                LOG.error(
+                    "HTTP job results call failed for URL: %s" % return_url)
                 LOG.exception(ex)
 
         if results_email:
             try:
                 LOG.debug('Sending job results email to: %s' % results_email)
-                smtp.send_email(None, results_email, None, str(return_data)) 
+                smtp.send_email(None, results_email, None, str(return_data))
             except Exception, ex:
                 LOG.error("Failed to send email to: %s" % results_email)
                 LOG.exception(ex)
 
+
 def get_messages():
-    context = zmq.Context()
-    socket = context.socket(zmq.PULL)
-    socket.setsockopt(zmq.IDENTITY, 'sub')
-
-    socket.connect(CONF.jobworker.queue_pull_uri)
-
+    opts = broker_opts()
     while True:
         try:
-            data = socket.recv_json()
-            exec_job(data)
+            c = amqpclient.Consume(
+                CONF.rabbitMQ.exchange,
+                CONF.jobworker.queue, **opts)
+            c.consume(exec_job)
         except Exception, ex:
-           LOG.warning('Job execution failed')
-           LOG.exception(ex)
+            LOG.warning('Job execution failed')
+            LOG.exception(ex)
+            time.sleep(3)
 
-    socket.close()
-    context.term()
 
 def main():
     CONF(sys.argv[1:])

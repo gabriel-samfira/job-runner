@@ -5,27 +5,24 @@ verbose=True
 
 [jobpublisher]
 # auth_key = set_your_key_here
-
-# queue_push_uri = tcp://127.0.0.1:4001
 # http_port = 4000
 
 [jobworker]
-
-# jobs = openstack_create_instance:/home/jobrunner/jobs/openstack_create_instance.sh,delete_instance:/home/jobrunner/jobs/openstack_delete_instance.sh
-# queue_pull_uri = tcp://127.0.0.1:4002
+# queue = "worker"
 
 [jobqueue]
-
-# Corresponding to jobpublisher.queue_push_uri
-# queue_pull_uri = tcp://127.0.0.1:4001
-
-# Corresponding to jobworker.queue_pull_uri
-# queue_push_uri = tcp://*:4002
+# queue = "jobqueue"
 
 [smtp]
-
 # host = localhost
 # auth_username = "SMTP authentication username"
 # auth_password = "SMTP authentication password"
 # email_from = your@email.com
 
+[rabbitMQ]
+#host = "192.168.122.50"
+#user = "guest"
+#passwd = "guest"
+#vhost = "/"
+#retry = 30
+#exchange = "JobRunner"

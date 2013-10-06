@@ -19,46 +19,61 @@ import flask
 import json
 import sys
 import uuid
-import zmq
+import amqpclient
 
 from oslo.config import cfg
 from jobrunner.openstack.common import log as logging
 
 opts = [
-    cfg.StrOpt('auth_key', default='', help='Key used to authenticate client requests'),
-    cfg.StrOpt('queue_push_uri', default='tcp://127.0.0.1:4001', help='Zmq queue push uri'),
-    cfg.IntOpt('http_port', default=4000, help='Http listen port'),
-    cfg.StrOpt('http_host', default='127.0.0.1', help='Http listen host'),
+    cfg.StrOpt(
+        'auth_key',
+        default='',
+        help='Key used to authenticate client requests'),
+    cfg.IntOpt(
+        'http_port',
+        default=4000,
+        help='Http listen port'),
+    cfg.StrOpt(
+        'http_host',
+        default='127.0.0.1',
+        help='Http listen host'),
+]
+
+opts_queue = [
+    cfg.StrOpt(
+        'queue',
+        default='jobqueue',
+        help='RabbitMQ host'),
+
 ]
 
 CONF = cfg.CONF
 CONF.register_opts(opts, 'jobpublisher')
+CONF.register_opts(opts_queue, 'jobqueue')
 
 LOG = logging.getLogger(__name__)
-
-
 app = flask.Flask(__name__)
 
-context = None
-socket = None
 
-def bind():
-    global socket, context, pd
+def broker_opts():
+    return {
+        "host": CONF.rabbitMQ.host,
+        "user": CONF.rabbitMQ.user,
+        "passwd": CONF.rabbitMQ.passwd,
+        "vhost": CONF.rabbitMQ.vhost,
+        "retry": CONF.rabbitMQ.retry,
+    }
 
-    context = zmq.Context()
-    socket = context.socket(zmq.PUSH)
-    socket.connect(CONF.jobpublisher.queue_push_uri)
-    socket.setsockopt(zmq.IDENTITY, 'pub')
 
 def enqueue_job(data):
-    global socket
-    if not socket:
-        bind()
+    OPTS = broker_opts()
+    pr = amqpclient.Producer(CONF.rabbitMQ.exchange, **OPTS)
+    pr.publish(json.dumps(data), CONF.jobqueue.queue)
+    pr.close()
+    return True
 
-    LOG.info('Enqueuing job: %s' % data)
-    socket.send_json(data)
 
-@app.route('/jobs/new', methods = ['POST'])
+@app.route('/jobs/new', methods=['POST'])
 def new_job():
     request_data = flask.request.json
 
@@ -66,7 +81,7 @@ def new_job():
     if auth_key != CONF.jobpublisher.auth_key:
         raise Exception('The provided auth_key is not valid')
 
-    job_id = str(uuid.uuid4()) 
+    job_id = str(uuid.uuid4())
 
     # Copy relevant dict content
     data = {}
@@ -77,8 +92,8 @@ def new_job():
     data['job_id'] = job_id
 
     enqueue_job(data)
+    return json.dumps({'job_id': job_id})
 
-    return json.dumps({'job_id':job_id})
 
 def main():
     CONF(sys.argv[1:])
@@ -93,4 +108,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
