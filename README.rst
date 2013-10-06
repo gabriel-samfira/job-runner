@@ -8,10 +8,17 @@ Setup on RHEL 6.4 or CentOS 6.4
 
 Dependencies::
 
- wget -O /etc/yum.repos.d/home:fengshuo:zeromq.repo http://download.opensuse.org/repositories/home:/fengshuo:/zeromq/CentOS_CentOS-6/home:fengshuo:zeromq.repo
- yum -y install zeromq python-zmq
- yum install -y python-flask python-netaddr python-six python-iso8601 python-eventlet
+ wget http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+ wget http://rpms.famillecollet.com/enterprise/remi-release-6.rpm
+ rpm -Uvh remi-release-6*.rpm epel-release-6*.rpm
+
+ yum --enablerepo=epel-testing install python-amqp
+ yum install -y python-flask python-netaddr python-six python-iso8601 python-eventlet rabbitmq-server
  yum install -y python-d2to1
+
+ chkconfig --add rabbitmq-server
+ chkconfig --level 2345 rabbitmq-server on
+ /etc/init.d/rabbitmq-server start
 
 Setup::
 
